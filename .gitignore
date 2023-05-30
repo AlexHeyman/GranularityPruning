@@ -160,5 +160,5 @@ cython_debug/
 #.idea/
 
 # Entries for suggested checkpoint and dataset directories
-.checkpoints/
-.data/
+./checkpoints/
+./data/
