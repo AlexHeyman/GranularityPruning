@@ -3,11 +3,19 @@ Usage: python run.py <args>
 Arguments:
 -d, --dataset_root_dir: dataset root directory
 -c, --checkpoint_dir: checkpoint directory
+-o, --output_path: path to file where text output should be written; default:
+  sys.stdout
+--save: path relative to -c where model checkpoint should be saved after all
+  training/pruning/other operations on the model are done. If "none", the model
+  will not be saved. If unspecified, the model will be saved directly in -c with
+  a filename based on its pruning parameters.
 -n, --network_type: "resnet20" or "dbsn"
 -p, --pruning_mode: "init", "none", "magnitude" (weights only), "bad_magnitude"
   (weights only), "mean_mag" (no weights), "bad_mean_mag" (no weights), "snip",
   "bad_snip", "stat" (channels or nodes only), "bad_stat" (channels or nodes
-  only), or "random".
+  only), or "random". "Bad" versions of non-random pruning modes remove the
+  network components with the highest scores and leave the ones with the lowest
+  scores, instead of vice versa.
 -g, --granularity: "weights" (both networks), "kernels" (resnet20 only),
   "channels" (resnet20 only), or "nodes" (dbsn only)
 -i, --init_iteration: iteration to train up to as part of initialization;
@@ -16,20 +24,24 @@ Arguments:
 -r, --rounds: number of iterative pruning rounds; 100 for one-shot pruning at
   initialization. Irrelevant if -p == "init" or -p == "none".
 -l, --prune_by_layer: "none", "all", or "by_res_type" (resnet20 only);
-  "none" by default
+  default: "none"
 --pbl_source: if specified, path relative to -c of checkpoint file whose
 fractions of pruned elements in each layer should be reproduced by this
 run's pruning. Makes -f and -l irrelevant.
 -s, --source: if -p != "init", path relative to -c of checkpoint file to
   initialize the network to and reset it to after each iterative pruning round;
-  default: "pruning_<-i>.pt". If -r == 0 or 100 and -s == "none", the network
-  will be freshly randomly initialized.
+  default: "pruning_<-i>.pt". If (-p == "none" or -r == 100) and -s == "none",
+  the network will be freshly randomly initialized.
 --masks_source: if -p == "none", path relative to -c of checkpoint file to
   initialize the network's masks from; default: same as -s
 --num_workers: number of worker processes to use to load data; default: 2
 --batch_size: network batch size; default: 128
 --train_iterations: number of iterations to train for in each round;
   default: 30000
+--print_every: frequency in iterations with which running loss is printed and
+  reset and validation accuracy on the test set is computed and printed;
+  default: 1000. If this is 0 or negative, these periodic evaluations will
+  never occur.
 --snip_batch_size: if -p == "snip" or "bad_snip", number of training samples to
   use for each round of SNIP; default: 2000
 --stat_alpha: if -p == "stat" or "bad_stat", statistical criterion "alpha"
@@ -42,7 +54,6 @@ import sys
 from os import path
 import argparse
 
-import random
 import torch
 import torch.nn as nn
 import torchvision
@@ -57,6 +68,8 @@ from utilities import compute_accuracy, ScaledTanh, DualTransformableMNIST,\
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset_root_dir', type=str, default=None)
 parser.add_argument('-c', '--checkpoint_dir', type=str, default=None)
+parser.add_argument('-o', '--output_path', type=str, default=None)
+parser.add_argument('--save', type=str, default=None)
 parser.add_argument('-n', '--network_type', type=str,
                     choices=['resnet20', 'dbsn'], default=None)
 parser.add_argument('-p', '--pruning_mode', type=str, default=None)
@@ -72,6 +85,7 @@ parser.add_argument('--masks_source', type=str, default=None)
 parser.add_argument('--num_workers', type=int, default=2)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--train_iterations', type=int, default=30000)
+parser.add_argument('--print_every', type=int, default=1000)
 parser.add_argument('--snip_batch_size', type=int, default=2000)
 parser.add_argument('--stat_alpha', type=float, default=1)
 parser.add_argument('--stat_beta', type=float, default=1)
@@ -79,6 +93,14 @@ parser.add_argument('--stat_beta', type=float, default=1)
 args = parser.parse_args()
 dataset_root_dir = args.dataset_root_dir
 checkpoint_dir = args.checkpoint_dir
+
+output_path = args.output_path
+if output_path is None:
+  output_file = sys.stdout
+else:
+  output_file = open(output_path, 'w')
+
+save_rel_path = args.save
 network_type = args.network_type
 pruning_mode = args.pruning_mode
 granularity = args.granularity
@@ -97,18 +119,16 @@ masks_source_checkpoint = args.masks_source
 num_workers = args.num_workers
 batch_size = args.batch_size
 train_iterations = args.train_iterations
+print_every = args.print_every
 snip_batch_size = args.snip_batch_size
 stat_alpha = args.stat_alpha
 stat_beta = args.stat_beta
-
-print_every = 1000
-output_file = sys.stdout
 
 device = torch.device('cpu')
 if torch.cuda.is_available():
   device = torch.device('cuda')
 
-output_file.write('Using device: %s\n' % device)
+print('Using device: %s' % device, file=output_file)
 
 if network_type == 'resnet20':
   stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
@@ -172,8 +192,8 @@ if network_type == 'resnet20':
     valid_pruning_modes = ['mean_mag', 'bad_mean_mag', 'snip', 'bad_snip',
                            'stat', 'bad_stat', 'random']
   else:
-    output_file.write('Granularity "%s" is not valid for network type "%s"'\
-                      % (granularity, network_type))
+    print('Granularity "%s" is not valid for network type "%s"'\
+                      % (granularity, network_type), file=output_file)
     output_file.close()
     exit()
 else: # DBSN
@@ -204,14 +224,14 @@ else: # DBSN
   def make_optimizer(parameters_to_optimize):
     return torch.optim.Adam(parameters_to_optimize, lr=1)
 
-  layer_widths = [2500, 2000, 1500, 1000, 500]
-  nonlinearities = [ScaledTanh(1.7159, 0.6666) for _ in range(len(layer_widths))]
-
   def init_params(m):
     if isinstance(m, (nn.Linear, masked_models.LinearWeightMasked)):
       nn.init.uniform_(m.weight, -0.05, 0.05)
       nn.init.constant_(m.bias, 0)
 
+  layer_widths = [2500, 2000, 1500, 1000, 500]
+  nonlinearities = [ScaledTanh(1.7159, 0.6666) for _ in range(len(layer_widths))]
+  
   if granularity == 'weights':
     model = masked_models.SimpleMNISTNetWeightMasked(
       layer_widths, nonlinearities).to(device)
@@ -223,8 +243,8 @@ else: # DBSN
     valid_pruning_modes = ['mean_mag', 'bad_mean_mag', 'snip', 'bad_snip',
                            'stat', 'bad_stat', 'random']
   else:
-    output_file.write('Granularity "%s" is not valid for network type "%s"'\
-                      % (granularity, network_type))
+    print('Granularity "%s" is not valid for network type "%s"'\
+                      % (granularity, network_type), file=output_file)
     output_file.close()
     exit()
 
@@ -238,10 +258,20 @@ ts = TrainingSystem('pruning_%s' % network_type, device, model,
                     trainloader, testloader, print_file=output_file)
 
 if pruning_mode == 'init':
-  output_file.write('Initializing network\n')
+  print('Initializing network', file=output_file)
   ts.train(init_iteration)
-  ts.save_checkpoint(filename=('pruning_%d.pt' % init_iteration))
-elif pruning_mode == 'none':
+  
+  if save_rel_path is None:
+    save_rel_path = ('pruning_%d.pt' % init_iteration)
+  if save_rel_path != 'none':
+    print('Saving checkpoint at %s' % path.join(checkpoint_dir, save_rel_path),
+          file=output_file)
+    ts.save_checkpoint(filename=save_rel_path)
+  
+  output_file.close()
+  exit()
+
+if pruning_mode == 'none':
   id_string = ''
   
   if source_checkpoint == 'none':
@@ -261,17 +291,11 @@ elif pruning_mode == 'none':
 
   id_string = id_string[:-1]
 
-  output_file.write('Beginning non-pruning training (%s)\n\n' % id_string)
-    
-  ts.train(train_iterations)
-  ts.save_checkpoint(filename=('pruning_%s.pt' % id_string))
-  
-  model.eval()
-  output_file.write('Train accuracy: %f\n' % compute_accuracy(device, model, trainloader))
-  output_file.write('Test accuracy: %f\n' % compute_accuracy(device, model, testloader))
+  print('Beginning non-pruning training (%s)\n' % id_string, file=output_file)
 else:
   if pruning_mode not in valid_pruning_modes:
-    output_file.write('Pruning mode "%s" is not valid for network type "%s" and granularity "%s"' % (pruning_mode, network_type, granularity))
+    print('Pruning mode "%s" is not valid for network type "%s" and granularity "%s"'\
+          % (pruning_mode, network_type, granularity), file=output_file)
     output_file.close()
     exit()
   
@@ -322,7 +346,7 @@ else:
                           or pruning_mode == 'bad_snip'
                           or pruning_mode == 'bad_stat')
   
-  output_file.write('Beginning pruning (%s)\n\n' % id_string)
+  print('Beginning pruning (%s)\n' % id_string, file=output_file)
   
   if num_pruning_rounds == 100:
     if source_checkpoint == 'none':
@@ -340,12 +364,19 @@ else:
     prune.prune_iteratively(device, ts, groups, num_pruning_rounds,
       fraction_to_prune, train_iterations, score_func, prune_largest_scores,
       checkpoint_dir, source_checkpoint)
-  
-  ts.train(train_iterations)
-  ts.save_checkpoint(filename=('pruning_%s.pt' % id_string))
-  
-  model.eval()
-  output_file.write('Train accuracy: %f\n' % compute_accuracy(device, model, trainloader))
-  output_file.write('Test accuracy: %f\n' % compute_accuracy(device, model, testloader))
 
+ts.train(train_iterations)
+
+if save_rel_path is None:
+  save_rel_path = ('pruning_%s.pt' % id_string)
+if save_rel_path != 'none':
+  print('Saving checkpoint at %s' % path.join(checkpoint_dir, save_rel_path),
+        file=output_file)
+  ts.save_checkpoint(filename=save_rel_path)
+
+model.eval()
+print('Train accuracy: %f' % compute_accuracy(device, model, trainloader),
+      file=output_file)
+print('Test accuracy: %f' % compute_accuracy(device, model, testloader),
+      file=output_file)
 output_file.close()
