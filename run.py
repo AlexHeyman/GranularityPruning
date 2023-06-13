@@ -259,8 +259,7 @@ model.apply(init_params)
 ts = TrainingSystem('pruning_%s' % network_type, device, model,
                     make_optimizer(model.non_mask_parameters()),
                     learning_rate_fn, update_lr_every, print_every,
-                    [], checkpoint_dir,
-                    trainloader, testloader, print_file=output_file)
+                    checkpoint_dir, trainloader, testloader, output_file)
 
 if pruning_mode == 'init':
   print('Initializing network', file=output_file)
