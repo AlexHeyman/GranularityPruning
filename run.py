@@ -17,7 +17,9 @@ Arguments:
   network components with the highest scores and leave the ones with the lowest
   scores, instead of vice versa.
 -g, --granularity: "weights" (both networks), "kernels" (resnet20 only),
-  "channels" (resnet20 only), or "nodes" (dbsn only)
+  "channels" (resnet20 only), or "nodes" (dbsn only). Determines what pruning
+  masks are applied to the network, even if no pruning is performed and thus all
+  of the mask elements are left as 1 (unpruned).
 -i, --init_iteration: iteration to train up to as part of initialization;
   0 by default
 -f, --fraction_to_prune: total fraction of prunable network components to prune
@@ -26,14 +28,17 @@ Arguments:
 -l, --prune_by_layer: "none", "all", or "by_res_type" (resnet20 only);
   default: "none"
 --pbl_source: if specified, path relative to -c of checkpoint file whose
-fractions of pruned elements in each layer should be reproduced by this
-run's pruning. Makes -f and -l irrelevant.
+  fractions of pruned elements in each layer should be reproduced by this
+  run's pruning. Makes -f and -l irrelevant.
 -s, --source: if -p != "init", path relative to -c of checkpoint file to
   initialize the network to and reset it to after each iterative pruning round;
-  default: "pruning_<-i>.pt". If (-p == "none" or -r == 100) and -s == "none",
-  the network will be freshly randomly initialized.
+  default: "pruning_<-i>.pt". Masks are not loaded from -s, and so checkpoint
+  files whose mask granularity does not match -g can be specified as -s. If
+  (-p == "none" or -r == 100) and -s == "none", the network will be freshly
+  randomly initialized.
 --masks_source: if -p == "none", path relative to -c of checkpoint file to
-  initialize the network's masks from; default: same as -s
+  initialize the network's masks from. If not specified, all mask elements are
+  left as 1.
 --num_workers: number of worker processes to use to load data; default: 2
 --batch_size: network batch size; default: 128
 --train_iterations: number of iterations to train for in each round;

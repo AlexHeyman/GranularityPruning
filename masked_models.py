@@ -26,8 +26,7 @@ def get_total_masks_size(mask_shapes):
   for element in mask_shapes:
     if isinstance(element, list):
       total += get_total_masks_size(element)
-    else:
-      # element is assumed to be a tuple defining a mask tensor shape
+    else: # element is assumed to be a tuple defining a mask tensor shape
       total += prod(element)
   
   return total
@@ -41,8 +40,7 @@ def make_mask_tensors(mask_shapes, masks_array, masks_array_index, masks_flat):
       masks_element, masks_array_index = make_mask_tensors(
         element, masks_array, masks_array_index, masks_flat)
       masks.append(masks_element)
-    else:
-      # element is assumed to be a tuple defining a mask tensor shape
+    else: # element is assumed to be a tuple defining a mask tensor shape
       new_index = masks_array_index + prod(element)
       new_mask_tensor = masks_array[masks_array_index:new_index].view(element)
       masks_array_index = new_index
