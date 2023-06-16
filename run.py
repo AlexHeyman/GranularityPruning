@@ -21,7 +21,8 @@ Arguments:
   masks are applied to the network, even if no pruning is performed and thus all
   of the mask elements are left as 1 (unpruned).
 -i, --init_iteration: iteration to train up to as part of initialization;
-  0 by default
+  0 by default. This option is inspired by the "late resetting" experiments in
+  Frankle et al. (2020), but is unused in our paper's experiments.
 -f, --fraction_to_prune: total fraction of prunable network components to prune
 -r, --rounds: number of iterative pruning rounds; 100 for one-shot pruning at
   initialization. Irrelevant if -p == "init" or -p == "none".
