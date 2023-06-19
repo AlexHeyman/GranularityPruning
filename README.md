@@ -8,7 +8,7 @@ This codebase was developed for Python 3.7.9, with PyTorch 1.10.0 and Torchvisio
 
 ## Usage
 
-This codebase's front end is the file '`run.py`.
+This codebase's front end is the file `run.py`.
 ```
 python run.py <args>
 ```
