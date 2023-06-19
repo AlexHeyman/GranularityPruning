@@ -23,7 +23,8 @@ Arguments:
 -i, --init_iteration: iteration to train up to as part of initialization;
   0 by default. This option is inspired by the "late resetting" experiments in
   Frankle et al. (2020), but is unused in our paper's experiments.
--f, --fraction_to_prune: total fraction of prunable network components to prune
+-f, --fraction_to_keep: total fraction of prunable network components to leave
+  behind after pruning; what we call "preservation rate" in our paper
 -r, --rounds: number of iterative pruning rounds; 100 for one-shot pruning at
   initialization. Irrelevant if -p == "init" or -p == "none".
 -l, --prune_by_layer: "none", "all", or "by_res_type" (resnet20 only);
@@ -81,7 +82,7 @@ parser.add_argument('-n', '--network_type', type=str,
 parser.add_argument('-p', '--pruning_mode', type=str, default=None)
 parser.add_argument('-g', '--granularity', type=str, default=None)
 parser.add_argument('-i', '--init_iteration', type=int, default=0)
-parser.add_argument('-f', '--fraction_to_prune', type=float, default=None)
+parser.add_argument('-f', '--fraction_to_keep', type=float, default=None)
 parser.add_argument('-r', '--rounds', type=int, default=None)
 parser.add_argument('-l', '--prune_by_layer', type=str,
                     choices=['none', 'all', 'by_res_type'], default='none')
@@ -111,7 +112,7 @@ network_type = args.network_type
 pruning_mode = args.pruning_mode
 granularity = args.granularity
 init_iteration = args.init_iteration
-fraction_to_prune = args.fraction_to_prune
+fraction_to_keep = args.fraction_to_keep
 num_pruning_rounds = args.rounds
 prune_by_layer = args.prune_by_layer
 pbl_source_checkpoint = args.pbl_source
@@ -312,13 +313,13 @@ else:
     groups = 'all_separate'
     pbl_model_state_dict = torch.load(path.join(checkpoint_dir,
       pbl_source_checkpoint))['model_state_dict']
-    fraction_to_prune = []
+    fraction_to_keep = []
     for i in range(len(model.masks_flat)):
       mask_tensor = pbl_model_state_dict['mask%d' % i]
-      fraction_to_prune.append(1 - (torch.count_nonzero(mask_tensor).item()
-                                    / torch.numel(mask_tensor)))
+      fraction_to_keep.append(torch.count_nonzero(mask_tensor).item()
+                              / torch.numel(mask_tensor))
   else:
-    id_string += '_%.3f' % fraction_to_prune
+    id_string += '_%.3f' % fraction_to_keep
     if prune_by_layer == 'all':
       id_string += '_by_layer'
       groups = 'all_separate'
@@ -362,12 +363,12 @@ else:
       ts.load_checkpoint(filename=source_checkpoint, masks_special='exclude')
     
     scores = score_func(device, model)
-    prune.prune(model, scores, groups, fraction_to_prune, prune_largest_scores)
+    prune.prune(model, scores, groups, fraction_to_keep, prune_largest_scores)
   else:
     ts.load_checkpoint(filename=source_checkpoint, masks_special='exclude')
     
     prune.prune_iteratively(device, ts, groups, num_pruning_rounds,
-      fraction_to_prune, train_iterations, score_func, prune_largest_scores,
+      fraction_to_keep, train_iterations, score_func, prune_largest_scores,
       checkpoint_dir, source_checkpoint)
 
 ts.train(train_iterations)

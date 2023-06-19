@@ -114,24 +114,26 @@ def get_random_scores(device, model):
 def set_masked_out_scores(model, scores, value):
   for i in range(len(scores)):
     scores[i] = torch.where(model.masks_flat[i] == 0,
-      torch.Tensor([value]).type(scores[i].dtype).to(scores[i].device), scores[i])
+      torch.Tensor([value]).type(scores[i].dtype).to(scores[i].device),
+      scores[i])
 
-def prune(model, scores, groups, fraction_to_prune, largest=False):
+def prune(model, scores, groups, fraction_to_keep, largest=False):
   # groups is an ordered collection of ordered collections of mask indices,
   # or else one of the strings 'all_separate' or 'all_together'
-  # fraction_to_prune can be either a number for all groups or an ordered
+  # fraction_to_keep can be either a number for all groups or an ordered
   # collection of numbers, one for each group
   if groups == 'all_separate':
     groups = [[i] for i in range(len(model.masks_flat))]
   elif groups == 'all_together':
     groups = [[i for i in range(len(model.masks_flat))]]
   
-  if isinstance(fraction_to_prune, numbers.Number):
-    fraction_to_prune = [fraction_to_prune for group in groups]
+  if isinstance(fraction_to_keep, numbers.Number):
+    fraction_to_keep = [fraction_to_keep for group in groups]
   
   for i in range(len(groups)):
     flattened_scores = torch.cat([scores[j].view(-1) for j in groups[i]])
-    num_indices_to_prune = round(fraction_to_prune[i] * len(flattened_scores))
+    num_indices_to_prune = round(
+      (1 - fraction_to_keep[i]) * len(flattened_scores))
     indices_to_prune = torch.topk(flattened_scores, num_indices_to_prune,
                                   largest=largest, sorted=False).indices
     group_masks_array = torch.ones(flattened_scores.shape,
@@ -144,12 +146,12 @@ def prune(model, scores, groups, fraction_to_prune, largest=False):
       flattened_mask *= group_masks_array[begin_index:end_index]
       begin_index = end_index
 
-def prune_iteratively(device, ts, groups, num_rounds, fraction_to_prune,
+def prune_iteratively(device, ts, groups, num_rounds, fraction_to_keep,
                       max_iteration, score_func, largest=False,
                       checkpoint_dir=None, checkpoint_name=None):
   # groups is an ordered collection of ordered collections of mask indices,
   # or else one of the strings 'all_separate' or 'all_together'
-  # fraction_to_prune can be either a number for all groups or an ordered
+  # fraction_to_keep can be either a number for all groups or an ordered
   # collection of numbers, one for each group
   # score_func takes (device, model) and returns a list of float tensors
   model = ts.model
@@ -159,18 +161,16 @@ def prune_iteratively(device, ts, groups, num_rounds, fraction_to_prune,
   elif groups == 'all_together':
     groups = [[i for i in range(len(model.masks_flat))]]
   
-  if isinstance(fraction_to_prune, numbers.Number):
-    fraction_to_prune = [fraction_to_prune for group in groups]
+  if isinstance(fraction_to_keep, numbers.Number):
+    fraction_to_keep = [fraction_to_keep for group in groups]
   
-  fraction_per_round = [1 - ((1 - f) ** (1 / num_rounds))
-                        for f in fraction_to_prune]
+  fraction_per_round = [f ** (1 / num_rounds) for f in fraction_to_keep]
   desired_fraction_left = [1 for group in groups]
   for i in range(num_rounds):
     print(('Round %d of %d' % (i + 1, num_rounds)), file=ts.print_file)
     
     for j in range(len(groups)):
-      desired_fraction_left[j] *= (1 - fraction_per_round[j])
-    desired_fraction_to_prune = [1 - f for f in desired_fraction_left]
+      desired_fraction_left[j] *= fraction_per_round[j]
     
     ts.train(max_iteration)
     print('', file=ts.print_file)
@@ -179,6 +179,6 @@ def prune_iteratively(device, ts, groups, num_rounds, fraction_to_prune,
       set_masked_out_scores(model, scores, float('inf'))
     else:
       set_masked_out_scores(model, scores, float('-inf'))
-    prune(model, scores, groups, desired_fraction_to_prune, largest)
+    prune(model, scores, groups, desired_fraction_left, largest)
     
     ts.load_checkpoint(checkpoint_dir, checkpoint_name, masks_special='exclude')

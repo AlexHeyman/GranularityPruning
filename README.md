@@ -22,7 +22,7 @@ python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g channels -
 
 Then, you can perform a sequence of iterative pruning rounds with a command like this:
 ```
-python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g weights -p magnitude -f 0.875 -r 5 --source init.pt --save iterative.pt --output_path output/iterative.txt
+python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g weights -p magnitude -f 0.125 -r 5 --source init.pt --save iterative.pt --output_path output/iterative.txt
 ```
 After that, if you wanted to do a random reinitialization experiment on the pruned network, you could use a command like this:
 ```
@@ -34,7 +34,7 @@ python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g weights -p
 ```
 If you wanted to do a normal, non-layer-matched random-pruning-at-initialization experiment, you could use a command like this:
 ```
-python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g weights -p random -f 0.875 -l all -r 100 --source init.pt --save random.pt --output_path output/random.txt
+python run.py -d data/resnet20 -c checkpoints/resnet20 -n resnet20 -g weights -p random -f 0.125 -l all -r 100 --source init.pt --save random.pt --output_path output/random.txt
 ```
 If you just wanted to train the network without any pruning, you could use a command like this:
 ```
