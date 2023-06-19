@@ -40,7 +40,7 @@ class DualTransformableMNIST(torchvision.datasets.MNIST):
     return img, target
 
 
-class RandomStretchTransform(nn.Module):
+class RandomStretchTransform(torch.nn.Module):
     
   def __init__(self, gamma_x, gamma_y):
     super().__init__()
@@ -60,7 +60,7 @@ class RandomStretchTransform(nn.Module):
     return TF.center_crop(img, (height, width))
 
 
-class DBSNTrainDualTransform(nn.Module):
+class DBSNTrainDualTransform(torch.nn.Module):
   
   def __init__(self):
     super().__init__()
