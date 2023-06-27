@@ -71,8 +71,7 @@ class TrainingSystem:
         self.model.load_state_dict(model_state_dict, strict=False)
       elif masks_special == 'only':
         for i in range(len(self.model.masks_flat)):
-          self.model.masks_flat[i].data.copy_(
-            model_state_dict['mask%d' % i].data)
+          self.model.masks_flat[i].copy_(model_state_dict['mask%d' % i])
       else:
         self.model.load_state_dict(model_state_dict, strict=False)
 

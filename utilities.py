@@ -92,7 +92,7 @@ def compute_accuracy(device, model, dataloader):
           inputs, labels = data
           outputs = model(inputs.to(device))
           # Find the class with the highest energy for each sample in the batch
-          _, predicted = torch.max(outputs.data, 1)
+          _, predicted = torch.max(outputs, dim=1)
           total += labels.size(0)
           correct += (predicted == labels.to(device)).sum().item()
   
