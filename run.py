@@ -20,7 +20,7 @@ Arguments:
   "channels" (resnet20 only), or "nodes" (dbsn only). Determines what pruning
   masks are applied to the network, even if no pruning is performed and thus all
   of the mask elements are left as 1 (unpruned).
--i, --init_iteration: iteration to train up to as part of initialization;
+-i, --init_iteration: iteration number to train up to as part of initialization;
   0 by default. This option is inspired by the "late resetting" experiments in
   Frankle et al. (2020), but is unused in our paper's experiments.
 -f, --fraction_to_keep: total fraction of prunable network components to leave
@@ -43,8 +43,7 @@ Arguments:
   left as 1.
 --num_workers: number of worker processes to use to load data; default: 2
 --batch_size: network batch size; default: 128
---train_iterations: number of iterations to train for in each round;
-  default: 30000
+--max_iteration: iteration number to train up to in each round; default: 30000
 --print_every: frequency in iterations with which running loss is printed and
   reset and validation accuracy on the test set is computed and printed;
   default: 1000. If this is 0 or negative, these periodic evaluations will
@@ -91,7 +90,7 @@ parser.add_argument('-s', '--source', type=str, default=None)
 parser.add_argument('--masks_source', type=str, default=None)
 parser.add_argument('--num_workers', type=int, default=2)
 parser.add_argument('--batch_size', type=int, default=128)
-parser.add_argument('--train_iterations', type=int, default=30000)
+parser.add_argument('--max_iteration', type=int, default=30000)
 parser.add_argument('--print_every', type=int, default=1000)
 parser.add_argument('--snip_batch_size', type=int, default=2000)
 parser.add_argument('--stat_alpha', type=float, default=1)
@@ -125,7 +124,7 @@ if source_checkpoint is None:
 masks_source_checkpoint = args.masks_source
 num_workers = args.num_workers
 batch_size = args.batch_size
-train_iterations = args.train_iterations
+max_iteration = args.max_iteration
 print_every = args.print_every
 snip_batch_size = args.snip_batch_size
 stat_alpha = args.stat_alpha
@@ -368,10 +367,10 @@ else:
     ts.load_checkpoint(filename=source_checkpoint, masks_special='exclude')
     
     prune.prune_iteratively(device, ts, groups, num_pruning_rounds,
-      fraction_to_keep, train_iterations, score_func, prune_largest_scores,
+      fraction_to_keep, max_iteration, score_func, prune_largest_scores,
       checkpoint_dir, source_checkpoint)
 
-ts.train(train_iterations)
+ts.train(max_iteration)
 
 if save_rel_path is None:
   save_rel_path = ('pruning_%s.pt' % id_string)
