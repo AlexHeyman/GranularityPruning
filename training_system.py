@@ -88,8 +88,6 @@ class TrainingSystem:
 
     while self.iterations_ran < max_iteration:
       for data in self.trainloader:
-        start_time = time.time()
-        
         if self.iterations_ran % self.update_lr_every == 0:
           self.update_lr()
           
@@ -121,7 +119,7 @@ class TrainingSystem:
               self.model, self.validloader), file=self.print_file)
             self.model.train()
 
-            start_time = time.time()
+          start_time = time.time()
 
         self.iterations_ran += 1
         if self.iterations_ran >= max_iteration:
