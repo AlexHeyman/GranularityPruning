@@ -18,7 +18,6 @@ class TrainingSystem:
     self.learning_rate_fn = learning_rate_fn
     self.update_lr_every = update_lr_every
     self.print_every = print_every
-    self.its_index = 0
     self.default_checkpoint_dir = default_checkpoint_dir
     self.trainloader = trainloader
     self.validloader = validloader
