@@ -205,7 +205,7 @@ if network_type == 'resnet20':
 else: # DBSN
   stats = ((0.5,), (0.5,)) # Maps [0, 1] to [-1, 1]
   
-  train_dual_transform = DBSNTrainDualTransform()
+  train_dual_transform = DBSNTrainDualTransform(stats)
   trainset = DualTransformableMNIST(root=dataset_root_dir, train=True,
                                     download=False,
                                     dual_transform=train_dual_transform)

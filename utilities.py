@@ -1,3 +1,4 @@
+from os import path
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -62,7 +63,7 @@ class RandomStretchTransform(torch.nn.Module):
 
 class DBSNTrainDualTransform(torch.nn.Module):
   
-  def __init__(self):
+  def __init__(self, stats):
     super().__init__()
     self.big_rotation = transforms.RandomRotation(
       (-15, 15), InterpolationMode.BILINEAR)
