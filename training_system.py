@@ -62,7 +62,8 @@ class TrainingSystem:
     if load_model:
       model_state_dict = checkpoint['model_state_dict']
       if masks_special == 'exclude':
-        mask_keys = [key for key in model_state_dict if key.startswith('mask')]
+        mask_keys = [key for key in model_state_dict\
+                     if key.startswith('mask') or key.endswith('.mask')]
         
         for key in mask_keys:
           del model_state_dict[key]
