@@ -1,3 +1,4 @@
+import time
 from os import path
 import torch
 import torchvision
@@ -84,7 +85,7 @@ class DBSNTrainDualTransform(torch.nn.Module):
     return self.final_transform(img), target
 
 
-def compute_accuracy(device, model, dataloader):
+def compute_accuracy(device, model, dataloader, k=1):
   correct = 0
   total = 0
 
@@ -92,9 +93,90 @@ def compute_accuracy(device, model, dataloader):
       for data in dataloader:
           inputs, labels = data
           outputs = model(inputs.to(device))
-          # Find the class with the highest energy for each sample in the batch
-          _, predicted = torch.max(outputs, dim=1)
+          topk = torch.topk(outputs, k, dim=1, sorted=False).indices
           total += labels.size(0)
-          correct += (predicted == labels.to(device)).sum().item()
+          correct += torch.eq(labels.to(device)[:, None], topk)\
+                     .any(dim=1).sum().item()
   
   return correct / total
+
+
+def compute_layer_dims(device, model, layers, dataset, batch_size, output_file):
+  # Computes the effective dimensionality of each layer of the model listed in
+  # <layers> and reports them alongside the actual dimensionalities
+  # See Eqn. 1 in https://www.cell.com/neuron/pdfExtended/S0896-6273(17)30054-5
+  # Assumes model is an ExposedMaskedModule
+  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                           shuffle=False)
+  
+  # Use the following facts:
+  # - Best estimate of mean (expected value) from a sample is sum / count
+  # - cov(X, Y) = E(XY) - E(X)E(Y)
+  actual_dims = []
+  node_means = []
+  node_covs = []
+  num_samples = 0
+  
+  start_time = time.time()
+  
+  print_every = 1000
+  next_print = print_every
+  
+  for data in dataloader:
+    if num_samples >= next_print:
+      print('%d samples processed' % next_print, file=output_file)
+      next_print += print_every
+    
+    inputs, _ = data
+    model(inputs.to(device))
+
+    if num_samples == 0:
+      for i in range(len(layers)):
+        batch_node_values = model.exposed_tensors[layers[i]].detach()
+        batch_node_values = batch_node_values.view(inputs.shape[0], -1)
+        actual_dims.append(batch_node_values.shape[1])
+        node_means.append(torch.sum(batch_node_values, dim=0))
+        batch_nv_products = torch.matmul(batch_node_values.unsqueeze(2),
+                                         batch_node_values.unsqueeze(1))
+        node_covs.append(torch.sum(batch_nv_products, dim=0))
+    else:
+      for i in range(len(layers)):
+        batch_node_values = model.exposed_tensors[layers[i]].detach()
+        batch_node_values = batch_node_values.view(inputs.shape[0], -1)
+        node_means[i] += torch.sum(batch_node_values, dim=0)
+        batch_nv_products = torch.matmul(batch_node_values.unsqueeze(2),
+                                         batch_node_values.unsqueeze(1))
+        node_covs[i] += torch.sum(batch_nv_products, dim=0)
+    
+    num_samples += inputs.shape[0]
+
+  samples_finish_time = time.time()
+  diff = samples_finish_time - start_time
+  print('All samples processed in %.3f seconds' % diff, file=output_file)
+  
+  effective_dims = []
+  
+  for i in range(len(layers)):
+    print('Computing effective dimensionality of layer %d' % layers[i])
+    
+    node_means[i] /= num_samples
+    node_covs[i] /= num_samples
+    
+    node_covs[i] -= torch.matmul(node_means[i].unsqueeze(1),
+                                 node_means[i].unsqueeze(0))
+    
+    # Take the absolute values of the eigenvalues just to be safe
+    eigenvalues = torch.abs(torch.linalg.eigvalsh(node_covs[i]))
+    
+    if torch.count_nonzero(eigenvalues) == 0:
+      effective_dims.append(torch.tensor(0, device=device))
+    else:
+      effective_dims.append(torch.square(torch.sum(eigenvalues))\
+                            / torch.sum(torch.square(eigenvalues)))
+  
+  dim_finish_time = time.time()
+  diff = dim_finish_time - samples_finish_time
+  print('All dimensionalities computed in %.3f seconds' % diff,
+        file=output_file)
+  
+  return effective_dims, actual_dims

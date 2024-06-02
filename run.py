@@ -5,11 +5,12 @@ Arguments:
 -c, --checkpoint_dir: checkpoint directory
 -o, --output_path: path to file where text output should be written; default:
   sys.stdout
---save: path relative to -c where model checkpoint should be saved after all
-  training/pruning/other operations on the model are done. If "none", the model
-  will not be saved. If unspecified, the model will be saved directly in -c with
-  a filename based on its pruning parameters.
--n, --network_type: "resnet20" or "dbsn"
+--save: path relative to -c where the model checkpoint should be saved after all
+  training and pruning is complete. If "none", the model will not be saved. If
+  unspecified, the model will be saved directly in -c with a filename based on
+  its pruning parameters.
+-n, --network_type: "dbsn", "resnet20" (on CIFAR-10 by default),
+  or "resnet20-cifar100"
 -p, --pruning_mode: "init", "none", "magnitude" (weights only), "bad_magnitude"
   (weights only), "mean_mag" (no weights), "bad_mean_mag" (no weights), "snip",
   "bad_snip", "stat" (channels or nodes only), "bad_stat" (channels or nodes
@@ -41,13 +42,24 @@ Arguments:
 --masks_source: if -p == "none", path relative to -c of checkpoint file to
   initialize the network's masks from. If not specified, all mask elements are
   left as 1.
+--use_cuda: "true" or "false"; "true" by default. If this is true and CUDA is
+  available, it will be used; otherwise, the CPU will be used.
 --num_workers: number of worker processes to use to load data; default: 2
---batch_size: network batch size; default: 128
+--batch_size: batch size for network training and testing; default: 128
 --max_iteration: iteration number to train up to in each round; default: 30000
 --print_every: frequency in iterations with which running loss is printed and
   reset and validation accuracy on the test set is computed and printed;
   default: 1000. If this is 0 or negative, these periodic evaluations will
   never occur.
+--accuracy_k: when calculating model accuracy, model predictions are considered
+  correct if the true label has one of the top k prediction scores; default: 1.
+  If this is 0 or negative, model accuracy will not be calculated or reported.
+--report_dims: "true" or "false"; "false" by default. If true, the effective and
+  actual dimensionalities of each of the network's node layers will be
+  calculated and reported after all training and pruning is complete.
+--report_dims_batch_size: if --report_dims == "true", size of batches from the
+  test set to run through the network when computing effective dimensionality;
+  default: 1
 --snip_batch_size: if -p == "snip" or "bad_snip", number of training samples to
   use for each round of SNIP; default: 2000
 --stat_alpha: if -p == "stat" or "bad_stat", statistical criterion "alpha"
@@ -68,8 +80,8 @@ import torchvision.transforms as transforms
 import masked_models
 import prune
 from training_system import TrainingSystem
-from utilities import compute_accuracy, ScaledTanh, DualTransformableMNIST,\
-     DBSNTrainDualTransform
+from utilities import compute_accuracy, compute_layer_dims, ScaledTanh,\
+     DualTransformableMNIST, DBSNTrainDualTransform
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset_root_dir', type=str, default=None)
@@ -77,7 +89,8 @@ parser.add_argument('-c', '--checkpoint_dir', type=str, default=None)
 parser.add_argument('-o', '--output_path', type=str, default=None)
 parser.add_argument('--save', type=str, default=None)
 parser.add_argument('-n', '--network_type', type=str,
-                    choices=['resnet20', 'dbsn'], default=None)
+                    choices=['dbsn', 'resnet20', 'resnet20-cifar100'],
+                    default=None)
 parser.add_argument('-p', '--pruning_mode', type=str, default=None)
 parser.add_argument('-g', '--granularity', type=str, default=None)
 parser.add_argument('-i', '--init_iteration', type=int, default=0)
@@ -88,10 +101,16 @@ parser.add_argument('-l', '--prune_by_layer', type=str,
 parser.add_argument('--pbl_source', type=str, default=None)
 parser.add_argument('-s', '--source', type=str, default=None)
 parser.add_argument('--masks_source', type=str, default=None)
+parser.add_argument('--use_cuda', type=str,
+                    choices=['true', 'false'], default='true')
 parser.add_argument('--num_workers', type=int, default=2)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--max_iteration', type=int, default=30000)
 parser.add_argument('--print_every', type=int, default=1000)
+parser.add_argument('--accuracy_k', type=int, default=1)
+parser.add_argument('--report_dims', type=str,
+                    choices=['true', 'false'], default='false')
+parser.add_argument('--report_dims_batch_size', type=int, default=1)
 parser.add_argument('--snip_batch_size', type=int, default=2000)
 parser.add_argument('--stat_alpha', type=float, default=1)
 parser.add_argument('--stat_beta', type=float, default=1)
@@ -122,31 +141,50 @@ if source_checkpoint is None:
   source_checkpoint = default_source_checkpoint
 
 masks_source_checkpoint = args.masks_source
+use_cuda = (args.use_cuda == 'true')
 num_workers = args.num_workers
 batch_size = args.batch_size
 max_iteration = args.max_iteration
 print_every = args.print_every
+accuracy_k = args.accuracy_k
+report_dims = (args.report_dims == 'true')
+report_dims_batch_size = args.report_dims_batch_size
 snip_batch_size = args.snip_batch_size
 stat_alpha = args.stat_alpha
 stat_beta = args.stat_beta
 
 device = torch.device('cpu')
-if torch.cuda.is_available():
+if use_cuda and torch.cuda.is_available():
   device = torch.device('cuda')
 
 print('Using device: %s' % device, file=output_file)
 
-if network_type == 'resnet20':
-  stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+if network_type == 'resnet20' or network_type == 'resnet20-cifar100':
+  if network_type == 'resnet20': # CIFAR-10
+    classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse',
+               'ship', 'truck')
+    
+    # Note that the second triplet (standard deviations) underestimate the real
+    # standard deviations of the training set by about 20%
+    stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    
+    dataset_class = torchvision.datasets.CIFAR10
+  else: # CIFAR-100
+    classes = tuple(str(i) for i in range(100))
 
+    # These standard deviations are accurate, though
+    stats = ((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
+    
+    dataset_class = torchvision.datasets.CIFAR100
+  
   train_transform = transforms.Compose([
     transforms.RandomCrop((32, 32), padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*stats)
     ])
-  trainset = torchvision.datasets.CIFAR10(root=dataset_root_dir, train=True,
-                                      download=False, transform=train_transform)
+  trainset = dataset_class(root=dataset_root_dir, train=True,
+                           download=False, transform=train_transform)
   trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                         shuffle=True, num_workers=num_workers)
 
@@ -154,13 +192,27 @@ if network_type == 'resnet20':
     transforms.ToTensor(),
     transforms.Normalize(*stats)
     ])
-  testset = torchvision.datasets.CIFAR10(root=dataset_root_dir, train=False,
-                                      download=False, transform=test_transform)
+  testset = dataset_class(root=dataset_root_dir, train=False,
+                          download=False, transform=test_transform)
   testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                         shuffle=False, num_workers=num_workers)
-
-  classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse',
-             'ship', 'truck')
+  '''
+  dataset = dataset_class(root=dataset_root_dir, train=True,
+                          download=False, transform=test_transform)
+  
+  imgs = torch.stack([item[0] for item in dataset], dim=0).numpy()
+  
+  mean_r = imgs[:, 0, :, :].mean()
+  mean_g = imgs[:, 1, :, :].mean()
+  mean_b = imgs[:, 2, :, :].mean()
+  print('Means: %.4f %.4f %.4f' % (mean_r, mean_g, mean_b), file=output_file)
+  
+  std_r = imgs[:, 0, :, :].std()
+  std_g = imgs[:, 1, :, :].std()
+  std_b = imgs[:, 2, :, :].std()
+  print('Standard deviations: %.4f %.4f %.4f' % (std_r, std_g, std_b),
+  file=output_file)
+  '''
   update_lr_every = 1
   
   def learning_rate_fn(iteration):
@@ -181,6 +233,8 @@ if network_type == 'resnet20':
     if isinstance(m, (nn.Conv2d, masked_models.Conv2dWeightTensorMasked,
                       nn.Linear)):
       nn.init.xavier_normal_(m.weight, gain=1)
+
+  report_dim_layers = list(range(0, 18 + 1, 2))
   
   if granularity == 'weights':
     model = masked_models.resnet20_weight_masked(
@@ -203,6 +257,7 @@ if network_type == 'resnet20':
     output_file.close()
     exit()
 else: # DBSN
+  classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')
   stats = ((0.5,), (0.5,)) # Maps [0, 1] to [-1, 1]
   
   train_dual_transform = DBSNTrainDualTransform(stats)
@@ -220,8 +275,7 @@ else: # DBSN
                                     download=False, transform=test_transform)
   testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                         shuffle=False, num_workers=num_workers)
-
-  classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')
+  
   update_lr_every = 500
   
   def learning_rate_fn(iteration):
@@ -235,6 +289,8 @@ else: # DBSN
       nn.init.uniform_(m.weight, -0.05, 0.05)
       nn.init.constant_(m.bias, 0)
 
+  report_dim_layers = list(range(5))
+  
   layer_widths = [2500, 2000, 1500, 1000, 500]
   nonlinearities = [ScaledTanh(1.7159, 0.6666) for _ in range(len(layer_widths))]
   
@@ -260,7 +316,8 @@ model.apply(init_params)
 ts = TrainingSystem('pruning_%s' % network_type, device, model,
                     make_optimizer(model.non_mask_parameters()),
                     learning_rate_fn, update_lr_every, print_every,
-                    checkpoint_dir, trainloader, testloader, output_file)
+                    checkpoint_dir, trainloader, testloader, accuracy_k,
+                    output_file)
 
 if pruning_mode == 'init':
   print('Initializing network', file=output_file)
@@ -380,8 +437,20 @@ if save_rel_path != 'none':
   ts.save_checkpoint(filename=save_rel_path)
 
 model.eval()
-print('Train accuracy: %f' % compute_accuracy(device, model, trainloader),
-      file=output_file)
-print('Test accuracy: %f' % compute_accuracy(device, model, testloader),
-      file=output_file)
+
+if accuracy_k > 0:
+  print('Top-%d train accuracy: %f' % (accuracy_k, compute_accuracy(device,
+    model, trainloader, accuracy_k)), file=output_file)
+  print('Top-%d test accuracy: %f' % (accuracy_k, compute_accuracy(device,
+    model, testloader, accuracy_k)), file=output_file)
+
+if report_dims:
+  print('Beginning layer dimensionality computation', file=output_file)
+  effective_dims, actual_dims = compute_layer_dims(device, model,
+    report_dim_layers, testset, report_dims_batch_size, output_file)
+  print('Layer dimensionalities:', file=output_file)
+  for i in range(len(report_dim_layers)):
+    print('Layer %d: %.3f out of %d' % (report_dim_layers[i], effective_dims[i],
+                                        actual_dims[i]), file=output_file)
+
 output_file.close()

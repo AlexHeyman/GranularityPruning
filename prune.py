@@ -67,7 +67,11 @@ def get_stat_scores(device, model, alpha, beta, dataset, batch_size):
 
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
                                            shuffle=False)
-  
+
+  # Use the following facts:
+  # - Best estimate of expected value is sum / count
+  # - var(X) = E(X^2) - E(X)^2
+  # - std(X) = sqrt(var(X))
   position_means = []
   position_devs = []
   num_samples = 0

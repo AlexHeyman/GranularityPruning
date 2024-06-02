@@ -9,7 +9,8 @@ class TrainingSystem:
 
   def __init__(self, name, device, model, optimizer, learning_rate_fn,
                update_lr_every, print_every, default_checkpoint_dir,
-               trainloader, validloader=None, print_file=sys.stdout):
+               trainloader, validloader=None, accuracy_k=1,
+               print_file=sys.stdout):
     self.name = name
     self.device = device
     self.model = model
@@ -21,6 +22,7 @@ class TrainingSystem:
     self.default_checkpoint_dir = default_checkpoint_dir
     self.trainloader = trainloader
     self.validloader = validloader
+    self.accuracy_k = accuracy_k
     self.print_file = print_file
     self.iterations_ran = 0
     self.running_loss = 0
@@ -61,6 +63,7 @@ class TrainingSystem:
 
     if load_model:
       model_state_dict = checkpoint['model_state_dict']
+      
       if masks_special == 'exclude':
         mask_keys = [key for key in model_state_dict\
                      if key.startswith('mask') or key.endswith('.mask')]
@@ -113,10 +116,11 @@ class TrainingSystem:
             self.running_loss / self.print_every), file=self.print_file)
           self.running_loss = 0
           
-          if self.validloader is not None:
+          if self.validloader is not None and self.accuracy_k > 0:
             self.model.eval()
-            print('Validation accuracy: %f' % compute_accuracy(self.device,
-              self.model, self.validloader), file=self.print_file)
+            print('Top-%d validation accuracy: %f' % (self.accuracy_k,
+              compute_accuracy(self.device, self.model, self.validloader,
+                               self.accuracy_k)), file=self.print_file)
             self.model.train()
 
           start_time = time.time()

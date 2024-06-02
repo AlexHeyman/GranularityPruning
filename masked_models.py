@@ -174,7 +174,7 @@ class LinearWeightMasked(nn.Module):
         )
 
 
-class SimpleMNISTNetWeightMasked(WeightMaskedModule):
+class SimpleMNISTNetWeightMasked(WeightMaskedModule, ExposedMaskedModule):
   
   def __init__(self, layer_widths, nonlinearities):
     complete_widths = [784] + layer_widths + [10]
@@ -192,9 +192,14 @@ class SimpleMNISTNetWeightMasked(WeightMaskedModule):
     self.nonlinearities = nn.ModuleList(nonlinearities)
 
   def forward(self, x):
+    self.reset_exposed_tensors()
+    
     x = x.view(-1, 784)
+    
     for i in range(len(self.fcs) - 1):
       x = self.nonlinearities[i](self.fcs[i](x))
+      self.exposed_tensors.append(x)
+    
     return self.fcs[-1](x)
 
 
@@ -537,7 +542,8 @@ class BasicBlockWeightTensorMasked(nn.Module):
         norm_layer: Optional[Callable[..., nn.Module]] = None,
         masks: List = None,
         masked_weight_tensors: List = None,
-        blocks: List = None
+        blocks: List = None,
+        exposed_tensors: List = None
     ) -> None:
         # masked_weight_tensors is a list maintained by the overall model that
         # this module appends its masked weight tensors to
@@ -545,6 +551,7 @@ class BasicBlockWeightTensorMasked(nn.Module):
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         width = int(planes * (base_width / 64.)) * groups
+        self.exposed_tensors = exposed_tensors
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3_weight_tensor_masked(
           inplanes, width, stride, groups, dilation, mask=masks[0])
@@ -565,6 +572,7 @@ class BasicBlockWeightTensorMasked(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+        self.exposed_tensors.append(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
@@ -574,6 +582,7 @@ class BasicBlockWeightTensorMasked(nn.Module):
 
         out += identity
         out = self.relu(out)
+        self.exposed_tensors.append(out)
 
         return out
 
@@ -631,7 +640,7 @@ class BottleneckWeightTensorMasked(nn.Module):
         return out
 
 
-class ResNetWeightTensorMasked(MaskedModule):
+class ResNetWeightTensorMasked(ExposedMaskedModule):
 
     def __init__(
         self,
@@ -732,7 +741,7 @@ class ResNetWeightTensorMasked(MaskedModule):
         new_block = block(self.inplanes, planes, stride, downsample,
           self.groups, self.base_width, previous_dilation, norm_layer,
           masks=masks[0], masked_weight_tensors=self.masked_weight_tensors,
-          blocks=self.blocks)
+          blocks=self.blocks, exposed_tensors=self.exposed_tensors)
         layers.append(new_block)
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
@@ -740,16 +749,19 @@ class ResNetWeightTensorMasked(MaskedModule):
               base_width=self.base_width, dilation=self.dilation,
               norm_layer=norm_layer, masks=masks[i],
               masked_weight_tensors=self.masked_weight_tensors,
-              blocks=self.blocks)
+              blocks=self.blocks, exposed_tensors=self.exposed_tensors)
             layers.append(new_block)
 
         return nn.Sequential(*layers)
 
     def _forward_impl(self, x: Tensor) -> Tensor:
         # See note [TorchScript super()]
+        self.reset_exposed_tensors()
+        
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        self.exposed_tensors.append(x)
         
         if self.maxpool is not None:
           x = self.maxpool(x)
