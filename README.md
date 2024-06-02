@@ -42,5 +42,5 @@ python run.py -d data/cifar10 -c checkpoints/resnet20 -n resnet20 -g weights -p 
 ```
 If you wanted to (for instance) compute and output the top-3 accuracy and the layer dimensionalities of an already-trained network, you could use a command like this, setting `max_iteration` to 0 to ensure no further training is performed:
 ```
-python run.py -d data/cifar10 -c checkpoints/resnet20 -n resnet20 -g weights -p none --source iterative.pt --max_iteration 0 --accuracy_k 3 --report_dims true --output_path output/resnet20/iterative_metrics.txt
+python run.py -d data/cifar10 -c checkpoints/resnet20 -n resnet20 -g weights -p none --source iterative.pt --max_iteration 0 --save none --accuracy_k 3 --report_dims true --output_path output/resnet20/iterative_metrics.txt
 ```
