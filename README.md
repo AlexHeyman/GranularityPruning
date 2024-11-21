@@ -1,6 +1,6 @@
 # GranularityPruning
 
-This codebase is a tweaked version of the one used to run the experiments in the forthcoming paper "Fine Granularity is Critical for Intelligent Neural Network Pruning", published to enable easier reproduction of those experiments.
+This codebase is a tweaked version of the one used to run the experiments in the paper [Fine Granularity is Critical for Intelligent Neural Network Pruning](https://direct.mit.edu/neco/article/36/12/2677/124823/Fine-Granularity-Is-Critical-for-Intelligent), published to enable easier reproduction of those experiments.
 
 ## Requirements
 
